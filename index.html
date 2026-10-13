@@ -2295,6 +2295,18 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   /* a pad can hold its own recording (RECORD + pad): it then plays that take instead of its note or slice */
   function padTake(snd, key) { var t = snd && snd.pads && snd.pads[key]; return t && t.data ? t : null; }
   E.padTake = function (s, key) { return padTake(E.sounds[s], key); };
+  /* Settings per pad. A drum kit's 16 pads are 16 sounds, and a pad holding its own recording is a sound of its own: each
+     keeps its own pitch, volume, filters, delay and reverb (on top of the kit's base settings). The notes of a melodic sound
+     are one instrument and share the sound's settings. The dials and the fader act on the pad played last. */
+  var PK = ['pitch', 'vol', 'lp', 'hp', 'bp', 'res', 'dly', 'rev'];
+  function pickP(o, numOnly) { var r = {}; if (o) PK.forEach(function (k) { var v = o[k]; if (v !== undefined && (!numOnly || (typeof v === 'number' && isFinite(v)))) r[k] = v; }); return r; }
+  E.PARAM_KEYS = PK;
+  function holder(snd, key) { var t = padTake(snd, key); if (t) return t; return snd.type === 'drum' && snd.slices ? snd.slices[key] : null; }
+  E.paramKey = function (s) { return E.sounds[s].type === 'drum' ? E.st.lastSlice[s] : E.st.lastKey[s]; };
+  /* 'pad' when the settings belong to one pad, 'sound' when they belong to the whole (melodic) sound */
+  E.paramScope = function (s, key) { return holder(E.sounds[s], key === undefined ? E.paramKey(s) : key) ? 'pad' : 'sound'; };
+  E.paramHolder = function (s, key) { var snd = E.sounds[s]; return holder(snd, key === undefined ? E.paramKey(s) : key) || snd.params; };
+  E.paramsOf = function (s, key) { var snd = E.sounds[s]; return Object.assign({}, snd.params, pickP(holder(snd, key === undefined ? E.paramKey(s) : key))); };
   function sndLen(snd) { var n = snd && snd.data ? snd.data.length : 0; if (snd && snd.pads) snd.pads.forEach(function (t) { if (t && t.data) n += t.data.length; }); return n; }
   E.soundSecs = function (s) { return sndLen(E.sounds[s]) / SR; };
   E.keyLabel = function (s, key) { var snd = E.sounds[s]; if (!snd.data) return ''; var t = padTake(snd, key); if (t) return t.name; if (snd.type === 'melodic') return E.noteName(s, key); return snd.labels ? snd.labels[key] : 'SL' + pad2(key + 1); };
@@ -2495,6 +2507,12 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   }
   E.liveVoices = function (t) { return E.ctx ? live(t === undefined ? E.ctx.currentTime : t).length : 0; };
   E.voiceLog = function () { return voices.map(function (v) { return { s: v.s, key: v.key, t: v.t, end: v.end, cut: v.cut }; }); };
+  var SOFT = null;
+  function softCurve() {
+    if (SOFT) return SOFT; SOFT = new Float32Array(4096);
+    for (var i = 0; i < 4096; i++) { var x = (i / 4095 * 2 - 1) * 10, ax = Math.abs(x), y = ax < 0.8 ? ax : 0.8 + 0.2 * Math.tanh((ax - 0.8) / 0.2); SOFT[i] = x < 0 ? -y : y; }
+    return SOFT;
+  }
   function part(v, b, rate, off, dur, gate, lvl, p, fx, t) {
     var ctx = E.ctx, real = Math.max(0.006, gate ? Math.min(dur / rate, gate) : dur / rate);
     var src = ctx.createBufferSource(); src.buffer = b;
@@ -2507,10 +2525,13 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     var g = ctx.createGain();
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(lvl, t + 0.002);
     g.gain.setValueAtTime(lvl, t + Math.max(0.003, real - 0.008)); g.gain.linearRampToValueAtTime(0, t + real);
-    filterChain(ctx, src, p, t).connect(g); g.connect(E.mix);
+    filterChain(ctx, src, p, t).connect(g);
+    var outN = g;
+    if (p.soft) { var pre = ctx.createGain(); pre.gain.value = 0.1; var ws = ctx.createWaveShaper(); ws.curve = softCurve(); g.connect(pre); pre.connect(ws); outN = ws; }
+    outN.connect(E.mix);
     /* the sends follow the note's own envelope, so a cut or stolen voice leaves only its echo and room behind */
-    if ((p.dly || 0) > 0.005 && E.dlyIn) { syncDelay(); var ds = ctx.createGain(); ds.gain.value = p.dly; g.connect(ds); ds.connect(E.dlyIn); }
-    if ((p.rev || 0) > 0.005 && E.revIn) { var rs = ctx.createGain(); rs.gain.value = p.rev * 1.2; g.connect(rs); rs.connect(E.revIn); }
+    if ((p.dly || 0) > 0.005 && E.dlyIn) { syncDelay(); var ds = ctx.createGain(); ds.gain.value = p.dly; outN.connect(ds); ds.connect(E.dlyIn); }
+    if ((p.rev || 0) > 0.005 && E.revIn) { var rs = ctx.createGain(); rs.gain.value = p.rev * 1.2; outN.connect(rs); rs.connect(E.revIn); }
     try { src.start(t, off, dur); } catch (e) { try { src.start(t, off); } catch (e2) { return; } }
     src.stop(t + real + 0.03);
     var pt = { src: src, g: g, done: false }; v.parts.push(pt); v.end = Math.max(v.end, t + real + 0.03);
@@ -2518,8 +2539,10 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   }
   function voice(s, key, t, o) {
     var snd = E.sounds[s]; if (!snd || !snd.data || !E.ctx) return null;
-    var p = snd.params; if (o.lock) p = Object.assign({}, p, o.lock);
-    var fx = o.fx || 0, total = snd.data.length / SR, off, dur, semis = p.pitch, own = padTake(snd, key);
+    var own = padTake(snd, key), p = Object.assign({}, snd.params, pickP(own || (snd.type === 'drum' ? snd.slices[key] : null)));
+    if (o.lock) { var L = Object.assign({}, o.lock), pl = L.pads ? L.pads[key] : null; delete L.pads; Object.assign(p, L, pl || {}); }
+    if (own) p.soft = true;
+    var fx = o.fx || 0, total = snd.data.length / SR, off, dur, semis = p.pitch;
     if (own) { total = own.data.length / SR; off = own.start * total; dur = Math.max(0.004, (total - off) * own.length); }
     else if (snd.type === 'melodic') { semis += E.noteSemis(key); off = p.start * total; dur = Math.max(0.01, (total - off) * p.length); }
     else {
@@ -2737,9 +2760,12 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     else if (st.n.indexOf(key) < 0 && st.n.length < 4) st.n.push(key);
     E.save(); emit(); return step;
   };
-  E.lockParams = function (part) {
-    var step = E.audioStep(), tr = E.track(E.editPattern(), E.st.selSound);
-    tr.locks[step] = Object.assign({}, tr.locks[step] || {}, part); E.save();
+  /* a lock for one pad (key given) or for the whole sound */
+  E.lockParams = function (part, key) {
+    var step = E.audioStep(), tr = E.track(E.editPattern(), E.st.selSound), L = Object.assign({}, tr.locks[step] || {});
+    if (key === undefined) Object.assign(L, part);
+    else { L.pads = Object.assign({}, L.pads || {}); L.pads[key] = Object.assign({}, L.pads[key] || {}, part); }
+    tr.locks[step] = L; E.save();
   };
   E.soundsIn = function (p) { var out = []; E.patterns[p].tracks.forEach(function (t, s) { if (t.steps.some(Boolean)) out.push(s); }); return out; };
   E.stepsIn = function (p) { var n = 0; E.patterns[p].tracks.forEach(function (t) { t.steps.forEach(function (x) { if (x) n++; }); }); return n; };
@@ -2792,7 +2818,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   };
   E.resetSound = function (s) {
     checkpoint('KNOBS ' + pad2(s + 1), 'knobs of ' + pad2(s + 1) + ' reset', { sounds: [s] });
-    var o = cloneSound(E.sounds[s], s); o.params = DEF_PARAMS(); o.slices = DEF_SLICES(); if (o.pads) o.pads.forEach(function (t) { if (t) { t.start = 0; t.length = 1; } });
+    var o = cloneSound(E.sounds[s], s); o.params = DEF_PARAMS(); o.slices = DEF_SLICES(); if (o.pads) o.pads.forEach(function (t) { if (t) { t.start = 0; t.length = 1; PK.forEach(function (k) { delete t[k]; }); } });
     E.sounds[s] = o; E.save(); emit();
   };
   E.clearPattern = function (p) { if (hasContent(E.patterns[p])) checkpoint('CLR P' + pad2(p + 1), 'P' + pad2(p + 1) + ' cleared', { patterns: [p] }); E.patterns[p] = emptyPattern(); E.save(); emit(); };
@@ -2842,7 +2868,19 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   }
   function peakOf(x) { var m = 0; for (var i = 0; i < x.length; i++) { var a = Math.abs(x[i]); if (a > m) m = a; } return m; }
   /* normalisation as metadata: up to +24 dB for quiet takes, never more than unity headroom for loud ones */
-  function normFor(x) { var pk = peakOf(x); return pk > 1e-4 ? clamp(0.9 / pk, 0.5, 16) : 1; }
+  /* the level 99.9% of the take stays under, so one tap on the phone or a pop does not hold the whole take down; a short
+     peak above it is caught by the output limiter. Up to +40 dB, so a quiet phone mic still plays as loud as the kit. */
+  function normFor(x) {
+    /* the first and last 50 ms are left out of the measure: that is where the touch of the pad lands on a phone */
+    var len = x.length, edge = len > 0.4 * SR ? Math.round(0.05 * SR) : 0, a = edge, z = len - edge, pk = 0, i, v;
+    for (i = a; i < z; i++) { v = Math.abs(x[i]); if (v > pk) pk = v; }
+    if (pk < 1e-5) return 1;
+    var bins = new Uint32Array(1024); for (i = a; i < z; i++) bins[Math.min(1023, Math.floor(Math.abs(x[i]) / pk * 1023))]++;
+    var keep = (z - a) * 0.999, n = 0, b = 0; for (b = 0; b < 1024; b++) { n += bins[b]; if (n >= keep) break; }
+    var robust = Math.max((b + 1) / 1023 * pk, pk / 2.5);
+    return clamp(0.95 / robust, 0.5, 100);
+  }
+  E.normFor = normFor;
   /* a loaded file: leading and trailing silence trimmed, levels untouched */
   function tidy(x) {
     var pk = peakOf(x), th = Math.max(0.002, pk * 0.02), a = 0, b = x.length - 1;
@@ -2905,7 +2943,9 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     if (E.micStream && E.micStream.active) { micIdle(); return Promise.resolve(E.micStream); }
     if (E.micPending) return E.micPending;
     try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
-    E.micPending = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).then(function (st) {
+    var md = navigator.mediaDevices;
+    E.micPending = md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } })
+      .catch(function (err) { if (err && (err.name === 'OverconstrainedError' || err.name === 'TypeError')) return md.getUserMedia({ audio: true }); throw err; }).then(function (st) {
       E.micPending = null; E.micStream = st; E.micDenied = 0; micIdle(); return st;
     }, function (err) {
       /* a refusal is not final: the next hold of RECORD asks again (after the permission is changed in the browser) */
@@ -3087,7 +3127,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       E.stop(); E.st.bouncing = true; mr.start();
       var bars = E.st.queued ? E.st.queued.length : E.st.chain.length;
       E.play();
-      var tail = E.sounds.some(function (x) { return x.data && ((x.params.dly || 0) > 0.005 || (x.params.rev || 0) > 0.005); }) ? 2200 : 400;
+      var wet = function (o) { return o && ((o.dly || 0) > 0.005 || (o.rev || 0) > 0.005); };
+      var tail = E.sounds.some(function (x) { return x.data && (wet(x.params) || (x.slices || []).some(wet) || (x.pads || []).some(wet)); }) ? 2200 : 400;
       setTimeout(function () { E.stop(); setTimeout(function () { mr.stop(); }, tail); }, bars * 16 * E.stepDur() * 1000 + 120);
     });
   };
@@ -3101,13 +3142,13 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     var st = E.st;
     return { v: 4, id: E.projectId, settings: E.settings, patterns: E.patterns, sel: { sound: st.selSound, pattern: st.selPattern, chain: E.targetChain(), layers: E.targetLayers(), focus: st.focus },
       sounds: E.sounds.map(function (s) { return { name: s.name, type: s.type, base: s.base, labels: s.labels || null, params: s.params, slices: s.slices, factory: !!s.factory, norm: s.norm || 1, data: s.data,
-        pads: s.pads && s.pads.some(Boolean) ? s.pads.map(function (t) { return t && t.data ? { name: t.name, norm: t.norm || 1, start: t.start, length: t.length, data: t.data } : null; }) : null }; }) };
+        pads: s.pads && s.pads.some(Boolean) ? s.pads.map(function (t) { return t && t.data ? Object.assign({ name: t.name, norm: t.norm || 1, start: t.start, length: t.length, data: t.data }, pickP(t)) : null; }) : null }; }) };
   }
   function fixPads(pads) {
     if (!pads || pads.length !== 16) return null;
     var out = pads.map(function (t) {
       if (!t || !t.data || !t.data.length) return null;
-      return { name: String(t.name || 'TAKE').slice(0, 8), data: clean(t.data instanceof Float32Array ? t.data : new Float32Array(t.data)), norm: +t.norm || 1, start: clamp(+t.start || 0, 0, 0.99), length: clamp(t.length === undefined ? 1 : +t.length, 0.01, 1) };
+      return Object.assign({ name: String(t.name || 'TAKE').slice(0, 8), data: clean(t.data instanceof Float32Array ? t.data : new Float32Array(t.data)), norm: +t.norm || 1, start: clamp(+t.start || 0, 0, 0.99), length: clamp(t.length === undefined ? 1 : +t.length, 0.01, 1) }, pickP(t, true));
     });
     return out.some(Boolean) ? out : null;
   }
@@ -3237,12 +3278,12 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     var sounds = E.sounds.map(function (sd, i) {
       var o = { slot: i + 1, kind: i < 8 ? 'melodic' : 'drum', name: sd.name || '', audioAssetId: sd.data ? 'pcm-' + (i + 1) : null, durationMs: sd.data ? Math.round(sd.data.length / SR * 1000) : 0,
         gain: sd.params.vol, pitchOffset: sd.params.pitch, filter: { lowPass: sd.params.lp, highPass: sd.params.hp, bandPass: sd.params.bp }, resonance: sd.params.res, delay: sd.params.dly || 0, reverb: sd.params.rev || 0, trim: { start: sd.params.start, length: sd.params.length }, normGain: sd.norm || 1 };
-      if (i >= 8) { o.slices = sd.slices.map(function (x) { return { start: x.start, length: x.length }; }); if (sd.labels) o.labels = sd.labels.slice(); }
+      if (i >= 8) { o.slices = sd.slices.map(function (x) { return Object.assign({ start: x.start, length: x.length }, pickP(x)); }); if (sd.labels) o.labels = sd.labels.slice(); }
       else if (sd.data) o.tuningMap = E.scaleMap();   /* semitones per key in the scale in use (the scale itself is a setting) */
       if (sd.factory) o.factory = true;
       o.audio = sd.data ? { rate: SR, encoding: 'f32le', data: b64(new Uint8Array(sd.data.buffer, sd.data.byteOffset, sd.data.byteLength)) } : null;
       /* recordings that belong to single pads (RECORD + pad) */
-      var takes = []; (sd.pads || []).forEach(function (t, k) { if (t && t.data) takes.push({ pad: k + 1, name: t.name, normGain: t.norm || 1, trim: { start: t.start, length: t.length }, durationMs: Math.round(t.data.length / SR * 1000),
+      var takes = []; (sd.pads || []).forEach(function (t, k) { if (t && t.data) takes.push({ pad: k + 1, name: t.name, normGain: t.norm || 1, trim: { start: t.start, length: t.length }, params: pickP(t), durationMs: Math.round(t.data.length / SR * 1000),
         audio: { rate: SR, encoding: 'f32le', data: b64(new Uint8Array(t.data.buffer, t.data.byteOffset, t.data.byteLength)) } }); });
       if (takes.length) o.padTakes = takes;
       return o;
@@ -3275,11 +3316,11 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       var sd = { name: o.name || '', type: i < 8 ? 'melodic' : 'drum', base: 60, labels: o.labels ? o.labels.slice() : null, data: data,
         params: { pitch: num(o.pitchOffset, 0), vol: num(o.gain, 0.8), lp: o.filter && typeof o.filter === 'object' ? num(o.filter.lowPass, 1) : 1, hp: o.filter && typeof o.filter === 'object' ? num(o.filter.highPass, 0) : 0,
           bp: o.filter && typeof o.filter === 'object' ? num(o.filter.bandPass, 0) : 0, filter: typeof o.filter === 'number' ? o.filter : 0, res: num(o.resonance, 0.1), dly: num(o.delay, 0), rev: num(o.reverb, 0), start: num(o.trim && o.trim.start, 0), length: num(o.trim && o.trim.length, 1) },
-        slices: o.slices && o.slices.length === 16 ? o.slices.map(function (x) { return { start: num(x.start, 0), length: num(x.length, 1) }; }) : DEF_SLICES(), factory: !!o.factory, norm: num(o.normGain, 1) };
+        slices: o.slices && o.slices.length === 16 ? o.slices.map(function (x) { return Object.assign({ start: num(x.start, 0), length: num(x.length, 1) }, pickP(x, true)); }) : DEF_SLICES(), factory: !!o.factory, norm: num(o.normGain, 1) };
       if (o.padTakes && o.padTakes.length) {
         var pads = new Array(16).fill(null);
         o.padTakes.forEach(function (t) { var k = (t.pad | 0) - 1; if (!pidx(k) || !t.audio || !t.audio.data) return; var u2 = unb64(t.audio.data);
-          pads[k] = { name: t.name || 'TAKE', data: new Float32Array(u2.buffer, 0, u2.length >> 2), norm: num(t.normGain, 1), start: num(t.trim && t.trim.start, 0), length: num(t.trim && t.trim.length, 1) }; });
+          pads[k] = Object.assign({ name: t.name || 'TAKE', data: new Float32Array(u2.buffer, 0, u2.length >> 2), norm: num(t.normGain, 1), start: num(t.trim && t.trim.start, 0), length: num(t.trim && t.trim.length, 1) }, pickP(t.params, true)); });
         sd.pads = pads;
       }
       return sd;
@@ -3553,7 +3594,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       case 'sound':
         use('sound'); st.selSound = k; C.sticky = null;
         var snd = E.sounds[k];
-        if (snd.data) { E.trigger(k, snd.type === 'melodic' ? st.lastKey[k] : 0); E.say(pad2(k + 1) + ' ' + snd.name.slice(0, 5), snd.type === 'drum' ? 'KIT' : 'MEL', 1500, 'wave'); }
+        if (snd.data) { E.trigger(k, snd.type === 'melodic' ? st.lastKey[k] : st.lastSlice[k]); E.say(pad2(k + 1) + ' ' + snd.name.slice(0, 5), snd.type === 'drum' ? 'KIT' : 'MEL', 1500, 'wave'); }
         else E.say(pad2(k + 1) + ' EMPTY', '', 1500);
         feel('detent'); E.save();
         break;
@@ -3693,26 +3734,35 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     E.changed();
   }
 
+  /* what the dials and the fader shape: the pad played last when it is a sound of its own (every drum pad, every pad with
+     its own recording), otherwise the whole melodic sound. Locks made while WRITE is held belong to the same target. */
+  function target() {
+    var sel = E.st.selSound, k = E.paramKey(sel), pad = E.paramScope(sel, k) === 'pad';
+    return { sel: sel, key: k, pad: pad, id: sel + (pad ? 'p' + k : ''), tag: pad ? 'P' + pad2(k + 1) : pad2(sel + 1),
+      full: pad2(sel + 1) + (pad ? ' PAD ' + pad2(k + 1) : ''), holder: E.paramHolder(sel, k), eff: E.paramsOf(sel, k) };
+  }
+  function lockShowFor(tg) { if (C.lockFor !== tg.id) { C.lockShow = {}; C.lockFor = tg.id; } return C.lockShow; }
+
   /* ================= knobs by context ================= */
   function knobSpec() {
-    var st = E.st, sel = st.selSound, snd = E.sounds[sel], p = snd.params;
+    var st = E.st, sel = st.selSound, snd = E.sounds[sel];
     if (mod('sound') && mod('pattern')) {
       var al = E.settings.alarm;
       return { id: 'alarm', ctx: 'ALARM',
         a: { label: 'HOUR', min: -1, max: 23, step: 1, value: al.h, fmt: function (v) { return v < 0 ? 'OFF' : pad2(v); }, set: function (v) { al.h = v; use('sound', 'pattern'); E.save(); E.say('ALARM', v < 0 ? 'OFF' : pad2(v) + pad2(al.m), 2000); } },
         b: { label: 'MINUTE', min: 0, max: 59, step: 1, value: al.m, fmt: pad2, set: function (v) { al.m = v; use('sound', 'pattern'); E.save(); E.say('ALARM', al.h < 0 ? 'OFF' : pad2(al.h) + pad2(v), 2000); } } };
     }
-    var lock = isHeld('write') && st.playing;
-    function setP(part) {
-      if (lock) { use('write'); E.lockParams(part); Object.assign(C.lockShow, part); E.say('LOCK ' + pad2(E.audioStep() + 1), '', 900); }
-      else Object.assign(p, part);
+    var lock = isHeld('write') && st.playing, tg = target();
+    function setP(part, name, r) {
+      if (lock) { use('write'); E.lockParams(part, tg.pad ? tg.key : undefined); Object.assign(lockShowFor(tg), part); E.say('LOCK ' + pad2(E.audioStep() + 1), r, 900, 'tone'); }
+      else { Object.assign(tg.holder, part); E.say(name + ' ' + tg.tag, r, 1200, 'tone'); }
       E.save();
     }
-    function cur(name) { return lock && C.lockShow[name] !== undefined ? C.lockShow[name] : p[name]; }
-    var m = st.knobMode;
-    if (m !== 2) return { id: 'tone' + sel + (lock ? 'L' : ''), ctx: lock ? 'LOCK' : 'TONE',
-      a: { label: 'PITCH', min: -12, max: 12, step: 1, center: 0, value: cur('pitch'), fmt: function (v) { return (v > 0 ? '+' : '') + v + ' ST'; }, set: function (v) { setP({ pitch: v }); E.show('tone', 1600); } },
-      b: { label: 'VOLUME', min: 0, max: 16, step: 1, value: Math.round(cur('vol') * 16), fmt: function (v) { return String(v); }, set: function (v) { setP({ vol: v / 16 }); E.show('tone', 1600); } } };
+    function cur(name) { var ls = lock ? lockShowFor(tg) : {}; return ls[name] !== undefined ? ls[name] : tg.eff[name]; }
+    var m = st.knobMode, stF = function (v) { return (v > 0 ? '+' : '') + v + ' ST'; };
+    if (m !== 2) return { id: 'tone' + tg.id + (lock ? 'L' : ''), ctx: (lock ? 'LOCK ' : 'TONE ') + tg.tag,
+      a: { label: 'PITCH', min: -12, max: 12, step: 1, center: 0, value: cur('pitch'), fmt: stF, set: function (v) { setP({ pitch: v }, 'PITCH', stF(v)); } },
+      b: { label: 'VOLUME', min: 0, max: 16, step: 1, value: Math.round(cur('vol') * 16), fmt: function (v) { return String(v); }, set: function (v) { setP({ vol: v / 16 }, 'VOL', pad2(v)); } } };
     /* trim is not lockable on the PO-33: A start, B length; on a drum kit it trims the slice played last */
     var drum = snd.type === 'drum', t = E.trimTarget(sel), tk = E.trimKey(sel), own = !!E.padTake(sel, tk), sl = drum ? st.lastSlice[sel] : -1;
     return { id: 'trim' + sel + 'k' + tk + (own ? 'o' : '') + 's' + sl, ctx: own ? 'TRIM P' + pad2(tk + 1) : drum ? 'TRIM S' + pad2(sl + 1) : 'TRIM',
@@ -3720,16 +3770,17 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       b: { label: 'LENGTH', min: 1, max: 100, step: 1, value: Math.round(t.length * 100), fmt: function (v) { return v + '%'; }, set: function (v) { use('record'); if (!snd.data) return; E.setTrimSL(sel, t.start, v / 100); E.show('wave', 1800); audition(sel); } } };
   }
 
-  /* ================= the fader: the time of the machine, and the selected sound's filters and sends =================
+  /* ================= the fader: the time of the machine, and the filters and sends of one sound =================
      Eight jobs, picked with the FADER key: TEMPO (50-250 BPM), SWING, LOW-PASS (top open), HIGH-PASS (bottom open),
-     BAND-PASS (bottom off), RESO, DELAY and REVERB (bottom off). Every job after SWING belongs to the selected sound:
-     each sound keeps its own values. Hold WRITE while playing and the move is locked to the step. Nothing else sets these. */
+     BAND-PASS (bottom off), RESO, DELAY and REVERB (bottom off). Every job after SWING belongs to the target (see target()):
+     the drum pad or recorded pad played last, or the melodic sound. Each keeps its own values. Hold WRITE while playing and
+     the move is locked to the step, for that target only. Nothing else sets these. */
   /* frequencies: '1.0K' / '163' on the display, with the unit under the fader */
   function hzFmt(f) { return f >= 1000 ? (f / 1000).toFixed(f >= 9950 ? 0 : 1) + 'K' : String(Math.round(f)); }
   function hzUnit(s) { return /\d$/.test(s) ? s + ' HZ' : /K$/.test(s) ? s.slice(0, -1) + ' KHZ' : s; }
   function fMode() { return ((E.st.faderMode | 0) % FADERS.length + FADERS.length) % FADERS.length; }
   function faderBent() {
-    var p = E.sounds[E.st.selSound].params, m = fMode();
+    var p = E.paramsOf(E.st.selSound), m = fMode();
     return [E.settings.bpm !== 120, E.settings.swing > 0, (p.lp === undefined ? 1 : p.lp) < 0.995, (p.hp || 0) > 0.005, (p.bp || 0) > 0.005, Math.abs((p.res || 0) - 0.1) > 0.02, (p.dly || 0) > 0.005, (p.rev || 0) > 0.005][m];
   }
   function faderSpec() {
@@ -3738,28 +3789,28 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       set: function (v) { E.settings.swing = v / 100; E.save(); E.say('SWING', v + '%', 1200, 'swing'); } };
     if (m === 0) return { id: 'f0', label: 'TEMPO', min: 50, max: 250, step: 1, value: E.settings.bpm, fmt: function (v) { return v + ' BPM'; },
       set: function (v) { E.settings.bpm = v; E.settings.preset = -1; E.save(); E.say('BPM', String(v), 1200); } };
-    var sel = st.selSound, snd = E.sounds[sel], p = snd.params, tag = pad2(sel + 1), lock = isHeld('write') && st.playing, hz = E.filterHz;
-    function cur(n, d) { var v = lock && C.lockShow[n] !== undefined ? C.lockShow[n] : p[n]; return v === undefined ? d : v; }
+    var sel = st.selSound, snd = E.sounds[sel], tg = target(), tag = tg.tag, lock = isHeld('write') && st.playing, hz = E.filterHz;
+    function cur(n, d) { var ls = lock ? lockShowFor(tg) : {}, v = ls[n] !== undefined ? ls[n] : tg.eff[n]; return v === undefined ? d : v; }
     function setP(part, name, r, gfx) {
-      if (!snd.data) { E.say(tag + ' EMPTY', '', 900); return; }
-      if (lock) { use('write'); E.lockParams(part); Object.assign(C.lockShow, part); E.say('LOCK ' + pad2(E.audioStep() + 1), r, 900, gfx || 'filter'); }
-      else { Object.assign(p, part); E.say(name + ' ' + tag, r, 1200, gfx || 'filter'); }
+      if (!snd.data) { E.say(pad2(sel + 1) + ' EMPTY', '', 900); return; }
+      if (lock) { use('write'); E.lockParams(part, tg.pad ? tg.key : undefined); Object.assign(lockShowFor(tg), part); E.say('LOCK ' + pad2(E.audioStep() + 1), r, 900, gfx || 'filter'); }
+      else { Object.assign(tg.holder, part); E.say(name + ' ' + tag, r, 1200, gfx || 'filter'); }
       E.save();
     }
-    var id = 'f' + m + '-' + sel + (lock ? 'L' : '');
+    var id = 'f' + m + '-' + tg.id + (lock ? 'L' : '');
     var lpF = function (v) { return v >= 100 ? 'OPEN' : hzFmt(hz.lp(v / 100)); }, hpF = function (v) { return v <= 0 ? 'OPEN' : hzFmt(hz.hp(v / 100)); }, bpF = function (v) { return v <= 0 ? 'OFF' : hzFmt(hz.bp(v / 100)); };
     /* label: the full name (read out, and on the display when the job is picked); short: what fits under the fader */
     if (m === 6 || m === 7) {
       var key = m === 6 ? 'dly' : 'rev', nm = m === 6 ? 'DLY' : 'REV', pc = function (v) { return v <= 0 ? 'OFF' : v + '%'; };
-      return { id: id, label: FADERS[m] + ' ' + tag, short: nm + ' ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur(key, 0) * 100), fmt: pc,
+      return { id: id, label: FADERS[m] + ' ' + tg.full, short: nm + ' ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur(key, 0) * 100), fmt: pc,
         set: function (v) { var o = {}; o[key] = v / 100; setP(o, nm, pc(v), FADER_GFX[m]); } };
     }
-    if (m === 2) return { id: id, label: 'LOW-PASS ' + tag, short: 'LP ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur('lp', 1) * 100), fmt: lpF, unit: function (v) { return hzUnit(lpF(v)); }, set: function (v) { setP({ lp: v / 100 }, 'LP', lpF(v)); } };
-    if (m === 3) return { id: id, label: 'HIGH-PASS ' + tag, short: 'HP ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur('hp', 0) * 100), fmt: hpF, unit: function (v) { return hzUnit(hpF(v)); }, set: function (v) { setP({ hp: v / 100 }, 'HP', hpF(v)); } };
-    if (m === 4) return { id: id, label: 'BAND-PASS ' + tag, short: 'BP ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur('bp', 0) * 100), fmt: bpF, unit: function (v) { return hzUnit(bpF(v)); }, set: function (v) { setP({ bp: v / 100 }, 'BP', bpF(v)); } };
-    return { id: id, label: 'RESO ' + tag, short: 'RES ' + tag, min: 0, max: 16, step: 1, value: Math.round(cur('res', 0.1) * 16), fmt: function (v) { return pad2(v); }, set: function (v) { setP({ res: v / 16 }, 'RESO', pad2(v)); } };
+    if (m === 2) return { id: id, label: 'LOW-PASS ' + tg.full, short: 'LP ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur('lp', 1) * 100), fmt: lpF, unit: function (v) { return hzUnit(lpF(v)); }, set: function (v) { setP({ lp: v / 100 }, 'LP', lpF(v)); } };
+    if (m === 3) return { id: id, label: 'HIGH-PASS ' + tg.full, short: 'HP ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur('hp', 0) * 100), fmt: hpF, unit: function (v) { return hzUnit(hpF(v)); }, set: function (v) { setP({ hp: v / 100 }, 'HP', hpF(v)); } };
+    if (m === 4) return { id: id, label: 'BAND-PASS ' + tg.full, short: 'BP ' + tag, min: 0, max: 100, step: 1, value: Math.round(cur('bp', 0) * 100), fmt: bpF, unit: function (v) { return hzUnit(bpF(v)); }, set: function (v) { setP({ bp: v / 100 }, 'BP', bpF(v)); } };
+    return { id: id, label: 'RESO ' + tg.full, short: 'RES ' + tag, min: 0, max: 16, step: 1, value: Math.round(cur('res', 0.1) * 16), fmt: function (v) { return pad2(v); }, set: function (v) { setP({ res: v / 16 }, 'RESO', pad2(v)); } };
   }
-  function nextFader() { var m = (fMode() + 1) % FADERS.length; E.st.faderMode = m; E.say(FADERS[m], m >= 2 ? pad2(E.st.selSound + 1) : '', 1300, FADER_GFX[m]); E.changed(); }
+  function nextFader() { var m = (fMode() + 1) % FADERS.length; E.st.faderMode = m; E.say(FADERS[m], m >= 2 ? target().tag : '', 1300, FADER_GFX[m]); E.changed(); }
 
   /* ================= pads by context ================= */
   function padView(i, ctx) {
@@ -4064,9 +4115,9 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     else if (ctx === 'volume' || g === 'vol') { for (var i = 0; i < 16; i++) { var x0 = 4 + i * 4, top = 15 - Math.round(i / 2.6); for (var yy = top; yy <= 15; yy++) if (i < E.settings.vol) { px(b, x0, yy); px(b, x0 + 1, yy); } if (i >= E.settings.vol) px(b, x0, 15); } }
     else if (g === 'swing') center(b, 'SW ' + Math.round(E.settings.swing * 100), 9);
     else if (g === 'mem') { var w = Math.round(E.memUsed() / E.MEM * 68); for (var k = 0; k < 68; k++) { px(b, 2 + k, 15); if (k < w) for (var y2 = 10; y2 <= 14; y2++) px(b, 2 + k, y2); } }
-    else if (g === 'filter') drawFilter(b, snd.params);
-    else if (g === 'tone') drawTone(b, snd.params);
-    else if (g === 'delay' || g === 'reverb') drawSend(b, g, g === 'delay' ? snd.params.dly : snd.params.rev);
+    else if (g === 'filter') drawFilter(b, E.paramsOf(sel));
+    else if (g === 'tone') drawTone(b, E.paramsOf(sel));
+    else if (g === 'delay' || g === 'reverb') { var pq = E.paramsOf(sel); drawSend(b, g, g === 'delay' ? pq.dly : pq.rev); }
     else if (ctx === 'fx' && st.fxHeld) { for (var f = 0; f < DW; f++) if ((f + Math.floor(t / 60)) % 6 < 3) px(b, f, 11 + ((f >> 2) % 2) * 2); }
     else drew = false;
     if (!drew) {
@@ -4143,7 +4194,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   /* the PO-33 guide, as this machine does it */
   /* every job has exactly one home */
   var COMBOS = [
-    ['Play', [['pads', 'play the selected sound · 1-8 melodic, 9-16 drum slices'], ['PLAY', 'start / stop'], ['dial A / B', 'the selected sound: pitch, volume'], ['RECORD + dials', 'trim the last played pad: start, length'], ['fader', 'tempo, swing, or the selected sound\'s filters, delay and reverb (each sound keeps its own)'], ['FADER key', 'tempo · swing · low-pass · high-pass · band-pass · reso · delay · reverb'], ['hold a key', 'its combinations appear over the display']]],
+    ['Play', [['pads', 'play the selected sound · 1-8 melodic, 9-16 drum slices'], ['PLAY', 'start / stop'], ['dial A / B', 'pitch and volume of the pad played last (every drum pad and recorded pad is a sound of its own), or of the melodic sound'], ['RECORD + dials', 'trim the last played pad: start, length'], ['fader', 'tempo, swing, or the filters, delay and reverb of the pad played last (each drum pad and recorded pad keeps its own), or of the melodic sound'], ['FADER key', 'tempo · swing · low-pass · high-pass · band-pass · reso · delay · reverb'], ['hold a key', 'its combinations appear over the display']]],
     ['Sounds', [['SOUND + pad', 'select sound'], ['RECORD + pad', 'record the mic onto that pad of the selected sound, while both are held: the pad then plays your recording (40 s shared)'], ['RECORD x2', 'load an audio file as the whole selected sound'], ['RECORD + SOUND', 'delete sound'], ['WRITE + SOUND + pad', 'copy sound to that slot'], ['WRITE + SOUND + drum slot + key', 'copy the last played slice to that key']]],
     ['Patterns', [['PATTERN + pad', 'select; while playing it starts at the next bar (amber NEXT)'], ['PATTERN + pads in order', 'chain up to 128'], ['PATTERN (tap)', 'pattern mode: several patterns at once, pick the one to edit'], ['NEW (top)', 'the first empty pattern, ready to write'], ['WRITE', 'step write on / off'], ['hold step + pads', 'its note or chord'], ['hold step + BPM', 'step repeat x1-x8'], ['WRITE held + pads', 'live record while playing'], ['WRITE held + dials or fader', 'lock pitch, volume, a filter, delay or reverb to the step'], ['WRITE + PATTERN + pad', 'copy pattern'], ['RECORD + PATTERN', 'clear pattern']]],
     ['Effects', [['FX + pad 1-15', 'punch-in effect while held (playing)'], ['FX + pad in write', 'record the effect into the pattern'], ['FX + 16 in write', 'clear recorded effects']]],

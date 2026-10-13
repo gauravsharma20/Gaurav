@@ -12,8 +12,8 @@ A pocket sampler, drum machine and sequencer that runs in the browser. Record a 
 - **Sampling.** Hold **RECORD** and press a pad. Your recording replaces what that pad plays in the selected sound, so tapping the pad plays your take. 40 seconds are shared across all sounds, and the factory sounds use part of that, so delete one you don't need to make room. Tap RECORD twice to load an audio file as a whole sound.
 - **16 patterns** of 16 steps. You can chain up to 128 patterns, or play several at once in pattern mode.
 - **15 effects** to play live or record into a pattern: loops, stutter, octave, unison, scratch, 6/8, retrigger, reverse and more.
-- **A fader with eight jobs:** tempo (50–250 BPM), swing, and the selected sound's low-pass, high-pass, band-pass, resonance, delay and reverb. Each sound keeps its own values.
-- **Dials:** pitch and volume of the selected sound. Hold RECORD and they trim the start and length.
+- **A fader with eight jobs:** tempo (50–250 BPM), swing, and the low-pass, high-pass, band-pass, resonance, delay and reverb of the pad you played last. Every drum pad and every pad holding your recording is a sound of its own with its own settings; the notes of a melodic sound share one set.
+- **Dials:** pitch and volume of the pad you played last (or of the melodic sound). Hold RECORD and they trim its start and length.
 
 ## Getting around
 
@@ -30,6 +30,7 @@ A pocket sampler, drum machine and sequencer that runs in the browser. Record a 
 | Hold **WRITE** + dials or fader, while playing | Lock a value to the current step |
 | **FX** + pad | Effect while held. In write mode it is recorded; FX + 16 clears effects |
 | **FADER** key | Step through the fader's jobs |
+| Fader | Tempo, swing, or the filters, delay and reverb of the pad you played last |
 | **BPM** + pad | Master volume 1–16 |
 | **RECORD** + **SOUND** / **PATTERN** | Delete the sound / clear the pattern |
 | **WRITE** + **SOUND** + **PLAY** | Save a backup file of the whole project |
