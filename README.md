@@ -9,7 +9,7 @@ A pocket sampler, drum machine and sequencer that runs in the browser. Record a 
 ## What's inside
 
 - **16 sounds.** Slots 1–8 are melodic (the pads play a scale; 16 scales in the menu). Slots 9–16 are drum kits with 16 slices each. All 16 come with a factory sound, and you can replace any of them with your own recording.
-- **Sampling.** Hold **RECORD** and a pad to record the mic into that slot. 40 seconds are shared across all slots. Tap RECORD twice to load an audio file.
+- **Sampling.** Hold **RECORD** and press a pad. Your recording replaces what that pad plays in the selected sound, so tapping the pad plays your take. 40 seconds are shared across all sounds, and the factory sounds use part of that, so delete one you don't need to make room. Tap RECORD twice to load an audio file as a whole sound.
 - **16 patterns** of 16 steps. You can chain up to 128 patterns, or play several at once in pattern mode.
 - **15 effects** to play live or record into a pattern: loops, stutter, octave, unison, scratch, 6/8, retrigger, reverse and more.
 - **A fader with eight jobs:** tempo (50–250 BPM), swing, and the selected sound's low-pass, high-pass, band-pass, resonance, delay and reverb. Each sound keeps its own values.
@@ -21,6 +21,8 @@ A pocket sampler, drum machine and sequencer that runs in the browser. Record a 
 | --- | --- |
 | Pads | Play the selected sound |
 | **SOUND** + pad | Pick a sound |
+| Hold **RECORD** + a pad | Record the mic onto that pad |
+| Hold **RECORD** + dials | Trim the last played pad: start, length |
 | **PATTERN** + pad (+ more pads) | Pick a pattern, or chain them in order |
 | **PATTERN**, tapped | Pattern mode: turn several patterns on, pick the one to edit |
 | **WRITE**, tapped | Step write: pads set the steps |
@@ -39,7 +41,7 @@ On a keyboard: `1234 qwer asdf zxcv` are the pads, and `g h j k l ;` and space a
 
 ## Your data
 
-Everything stays in your browser: sounds, patterns and settings are saved on your device, and nothing is uploaded. Clearing the site's data in the browser erases them, so keep a backup file of anything you care about. Recording asks for microphone permission the first time.
+Everything stays in your browser: sounds, patterns and settings are saved on your device, and nothing is uploaded. Clearing the site's data in the browser erases them, so keep a backup file of anything you care about. Recording asks for microphone permission the first time. Inside Claude's artifact viewer the microphone is blocked; this website is where recording works.
 
 ## Hosting
 
