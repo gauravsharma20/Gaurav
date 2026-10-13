@@ -4,7 +4,7 @@ A pocket sampler, drum machine and sequencer that runs in the browser. Record a 
 
 <img src="screenshot.png" alt="SYNE S-16 on a phone: dot-matrix display, three keys and two dials, 16 pads, a fader, and RECORD, FX, PLAY and WRITE" width="320">
 
-**Open it:** the link to this site (GitHub Pages). On an iPhone, tap Share, then **Add to Home Screen**, and it opens full screen like an app. After the first visit it works offline.
+**Open it: [gauravsharma20.github.io/Gaurav](https://gauravsharma20.github.io/Gaurav/)** On an iPhone, tap Share, then **Add to Home Screen**, and it opens full screen like an app. After the first visit it works offline.
 
 ## What's inside
 
@@ -45,4 +45,4 @@ Everything stays in your browser: sounds, patterns and settings are saved on you
 
 ## Hosting
 
-The whole app is one self-contained `index.html`. The other files make it installable and let it work offline: `manifest.webmanifest`, `sw.js` and the icons. Any static host works. On GitHub Pages: **Settings → Pages → Deploy from a branch → `main` / root**.
+The whole app is one self-contained `index.html`. The other files make it installable and let it work offline: `manifest.webmanifest`, `sw.js` and the icons. Any static host works. This copy is served by GitHub Pages from the `gh-pages` branch, which mirrors `main`.
