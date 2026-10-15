@@ -1,8 +1,8 @@
-# SYNE S-16
+# SYNE PULSE
 
 A pocket sampler, drum machine and sequencer that runs in the browser. Record a sound with your phone's mic, play it across 16 pads, write patterns, chain them, and play them back with effects. It is built for a phone held in one hand, and it works on a laptop too.
 
-<img src="screenshot.png" alt="SYNE S-16 on a phone: dot-matrix display, three keys and two dials, 16 pads, a fader, and RECORD, FX, PLAY and WRITE" width="320">
+<img src="screenshot.png" alt="SYNE PULSE on a phone: dot-matrix display, three keys and two dials, 16 pads, a fader, and RECORD, FX, PLAY and WRITE" width="320">
 
 **Open it: [gauravsharma20.github.io/Gaurav](https://gauravsharma20.github.io/Gaurav/)** On an iPhone, tap Share, then **Add to Home Screen**, and it opens full screen like an app. After the first visit it works offline.
 
